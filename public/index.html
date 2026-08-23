@@ -9,8 +9,22 @@
 <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
 <script>
 const term=new Terminal({cursorBlink:true}); const fit=new FitAddon.FitAddon(); term.loadAddon(fit); term.open(document.getElementById('t')); fit.fit();
-const ws=new WebSocket((location.protocol==='https:'?'wss:':'ws:')+'//'+location.host);
-ws.onopen=()=>{term.writeln('Connected as ROOT inside container. Попробуй: whoami, apt update'); term.focus();}
-ws.onmessage=e=>term.write(e.data); ws.onclose=e=>term.writeln('\r\nClosed '+e.reason);
-term.onData(d=>ws.send(d)); term.onResize(({cols,rows})=>{try{ws.send(JSON.stringify({cols,rows}))}catch{}}); window.onresize=()=>fit.fit();
+let ws, reconnectDelay=1000;
+function connect(){
+  ws=new WebSocket((location.protocol==='https:'?'wss:':'ws:')+'//'+location.host);
+  ws.onopen=()=>{ reconnectDelay=1000; term.writeln('\x1b[32mConnected as ROOT inside container. Попробуй: whoami, apt update\x1b[0m'); term.focus(); };
+  ws.onmessage=e=>term.write(e.data);
+  ws.onclose=e=>{
+    if(e.reason && e.reason.includes('bad auth')){ term.writeln('\r\n\x1b[31mClosed bad auth - проверь WEB_PASSWORD\x1b[0m'); return; }
+    term.writeln('\r\n\x1b[33mClosed ('+(e.reason||e.code)+') - реконнект через '+reconnectDelay/1000+'с...\x1b[0m');
+    setTimeout(connect, reconnectDelay);
+    reconnectDelay=Math.min(reconnectDelay*2,10000);
+  };
+  ws.onerror=()=>{ try{ws.close()}catch{} };
+}
+connect();
+term.onData(d=>{ try{ws.send(d)}catch{} });
+term.onResize(({cols,rows})=>{try{ws.send(JSON.stringify({cols,rows}))}catch{}}); window.onresize=()=>fit.fit();
+// keepalive ping каждые 30с чтобы Railway не убивал idle WS
+setInterval(()=>{ try{ if(ws && ws.readyState===1) ws.send('') }catch{} },30000);
 </script></body></html>

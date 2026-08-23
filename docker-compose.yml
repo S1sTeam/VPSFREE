@@ -2,10 +2,14 @@ services:
   vps:
     build: .
     ports:
-      - "127.0.0.1:3000:3000" # только localhost, не 0.0.0.0 — безопасно
+      - "127.0.0.1:3000:3000" # только localhost
     environment:
       - WEB_USER=admin
-      - WEB_PASSWORD=admin123 # ПОМЕНЯЙ на сложный!
+      - WEB_PASSWORD=admin123 # ПОМЕНЯЙ!
       - PORT=3000
-    # контейнер и так root внутри, но хост не трогает
-    # для "настоящий VPS" apt работает: apt update && apt install nginx -y
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD","curl","-f","http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

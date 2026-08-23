@@ -25,18 +25,22 @@ app.get('/health',(req,res)=>res.send('ok - apt работает, делай sud
 const server=http.createServer(app);
 const wss=new WebSocket.Server({server});
 wss.on('connection',(ws,req)=>{
-  // HTTP уже защищен basicAuth, браузер не шлет Authorization в WebSocket -> не проверяем header здесь
-  // Защита остается на уровне страницы (без логина не загрузится index.html)
-  // ВНИМАНИЕ: root только ВНУТРИ Docker контейнера, не хоста. Защищено WEB_PASSWORD.
-  // pty запускается от root контейнера -> apt работает без sudo: apt update && apt install nginx -y
-  // На хосте root не дается
+  ws.isAlive=true; ws.on('pong',()=>ws.isAlive=true);
   const ptyProc = pty.spawn('bash',[],{name:'xterm-color',cols:80,rows:24,cwd:'/root',env:process.env});
   ptyProc.onData(d=>{try{ws.send(d)}catch{}});
   ws.on('message',m=>{
     try{ const j=JSON.parse(m); if(j.cols&&j.rows){ptyProc.resize(j.cols,j.rows); return;}}catch{}
+    if(m.toString()==='') return; // keepalive
     ptyProc.write(m.toString());
   });
   ws.on('close',()=>ptyProc.kill());
-  ptyProc.onExit(()=>ws.close());
+  ptyProc.onExit(()=>{ try{ws.close()}catch{} });
 });
+// keepalive каждые 30с чтобы Railway/прокси не резал idle
+setInterval(()=>{
+  wss.clients.forEach(ws=>{
+    if(!ws.isAlive) return ws.terminate();
+    ws.isAlive=false; try{ws.ping()}catch{}
+  });
+},30000);
 server.listen(PORT,()=>console.log(`VPS web console http://localhost:${PORT} user=${WEB_USER}`));
