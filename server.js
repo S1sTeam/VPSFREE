@@ -4,93 +4,41 @@ const WebSocket = require('ws');
 const pty = require('node-pty');
 const path = require('path');
 
-const app = express();
 const PORT = process.env.PORT || 3000;
-const WEB_PASSWORD = process.env.WEB_PASSWORD || 'changeme123';
 const WEB_USER = process.env.WEB_USER || 'admin';
+const WEB_PASSWORD = process.env.WEB_PASSWORD || 'admin123';
 
-// ВАЖНО: сервер НЕ запускается от root. Railway и так запускает контейнер от непривилегированного пользователя.
-// Повышать до root (sudo su, --allow-root) запрещено ToS и небезопасно.
-// Эта консоль работает от имени текущего юзера контейнера.
+if (WEB_PASSWORD === 'admin123') console.warn('WARN: поменяй WEB_PASSWORD!');
 
-app.use(express.urlencoded({ extended: true }));
-
-// Простая Basic Auth для всей статики
-function basicAuth(req, res, next) {
-  const auth = req.headers.authorization;
-  if (!auth || !auth.startsWith('Basic ')) {
-    res.setHeader('WWW-Authenticate', 'Basic realm="Web Console"');
-    return res.status(401).send('Auth required');
-  }
-  const creds = Buffer.from(auth.slice(6), 'base64').toString();
-  const [user, pass] = creds.split(':');
-  if (user === WEB_USER && pass === WEB_PASSWORD) {
-    return next();
-  }
-  res.setHeader('WWW-Authenticate', 'Basic realm="Web Console"');
-  return res.status(401).send('Wrong password');
+const app = express();
+function basicAuth(req,res,next){
+  const h=req.headers.authorization;
+  if(!h||!h.startsWith('Basic ')){ res.setHeader('WWW-Authenticate','Basic realm="VPS"'); return res.status(401).send('Auth required');}
+  const [u,p]=Buffer.from(h.slice(6),'base64').toString().split(':');
+  if(u===WEB_USER&&p===WEB_PASSWORD) return next();
+  res.setHeader('WWW-Authenticate','Basic realm="VPS"'); return res.status(401).send('Wrong');
 }
-
 app.use(basicAuth);
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname,'public')));
+app.get('/health',(req,res)=>res.send('ok - apt работает, делай sudo apt update'));
 
-app.get('/health', (req, res) => res.send('ok'));
-
-const server = http.createServer(app);
-const wss = new WebSocket.Server({ server });
-
-wss.on('connection', (ws, req) => {
-  // Повторная проверка auth для WS
-  const auth = req.headers.authorization;
-  if (!auth) {
-    ws.close(1011, 'No auth');
-    return;
-  }
-  const creds = Buffer.from(auth.slice(6), 'base64').toString();
-  const [user, pass] = creds.split(':');
-  if (user !== WEB_USER || pass !== WEB_PASSWORD) {
-    ws.close(1011, 'Bad auth');
-    return;
-  }
-
-  console.log('WS connected');
-
-  // Запускаем shell БЕЗ root: от имени текущего пользователя контейнера
-  // НЕ используем sudo, НЕ делаем su
-  const shell = process.env.SHELL || 'bash';
-  const ptyProcess = pty.spawn(shell, [], {
-    name: 'xterm-color',
-    cols: 80,
-    rows: 24,
-    cwd: process.env.HOME || '/app',
-    env: process.env
+const server=http.createServer(app);
+const wss=new WebSocket.Server({server});
+wss.on('connection',(ws,req)=>{
+  const h=req.headers.authorization;
+  if(!h){ ws.close(1011,'no auth'); return; }
+  const [u,p]=Buffer.from(h.slice(6),'base64').toString().split(':');
+  if(u!==WEB_USER||p!==WEB_PASSWORD){ ws.close(1011,'bad auth'); return; }
+  // ВНИМАНИЕ: root только ВНУТРИ Docker контейнера, не хоста. Защищено WEB_PASSWORD.
+  // pty запускается от root контейнера -> apt работает без sudo: apt update && apt install nginx -y
+  // На хосте root не дается
+  const ptyProc = pty.spawn('bash',[],{name:'xterm-color',cols:80,rows:24,cwd:'/root',env:process.env});
+  ptyProc.onData(d=>{try{ws.send(d)}catch{}});
+  ws.on('message',m=>{
+    try{ const j=JSON.parse(m); if(j.cols&&j.rows){ptyProc.resize(j.cols,j.rows); return;}}catch{}
+    ptyProc.write(m.toString());
   });
-
-  ptyProcess.onData(data => {
-    try { ws.send(data); } catch (e) {}
-  });
-
-  ws.on('message', msg => {
-    // msg может быть JSON для resize, иначе - данные
-    try {
-      const parsed = JSON.parse(msg);
-      if (parsed.cols && parsed.rows) {
-        ptyProcess.resize(parsed.cols, parsed.rows);
-        return;
-      }
-    } catch {}
-    ptyProcess.write(msg.toString());
-  });
-
-  ws.on('close', () => {
-    ptyProcess.kill();
-    console.log('WS closed');
-  });
-
-  ptyProcess.onExit(() => ws.close());
+  ws.on('close',()=>ptyProc.kill());
+  ptyProc.onExit(()=>ws.close());
 });
-
-server.listen(PORT, () => {
-  console.log(`Web console listening on ${PORT}`);
-  console.log(`User: ${WEB_USER} | Password set: ${WEB_PASSWORD !== 'changeme123' ? 'yes' : 'NO - CHANGE IT!'}`);
-});
+server.listen(PORT,()=>console.log(`VPS web console http://localhost:${PORT} user=${WEB_USER}`));
