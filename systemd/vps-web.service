@@ -1,0 +1,18 @@
+[Unit]
+Description=VPS Web Console + SSH
+After=network.target docker.service
+Wants=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/VPSFREE
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=2
+Environment=PORT=3000
+Environment=WEB_USER=admin
+Environment=WEB_PASSWORD=admin123
+# для ssh внутри Docker sshd стартует из entrypoint.sh, для хоста - отдельный сервис sshd
+
+[Install]
+WantedBy=multi-user.target
