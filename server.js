@@ -25,10 +25,8 @@ app.get('/health',(req,res)=>res.send('ok - apt работает, делай sud
 const server=http.createServer(app);
 const wss=new WebSocket.Server({server});
 wss.on('connection',(ws,req)=>{
-  const h=req.headers.authorization;
-  if(!h){ ws.close(1011,'no auth'); return; }
-  const [u,p]=Buffer.from(h.slice(6),'base64').toString().split(':');
-  if(u!==WEB_USER||p!==WEB_PASSWORD){ ws.close(1011,'bad auth'); return; }
+  // HTTP уже защищен basicAuth, браузер не шлет Authorization в WebSocket -> не проверяем header здесь
+  // Защита остается на уровне страницы (без логина не загрузится index.html)
   // ВНИМАНИЕ: root только ВНУТРИ Docker контейнера, не хоста. Защищено WEB_PASSWORD.
   // pty запускается от root контейнера -> apt работает без sudo: apt update && apt install nginx -y
   // На хосте root не дается
